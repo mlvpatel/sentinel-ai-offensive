@@ -1,0 +1,39 @@
+# Sensitive output — never commit these
+findings/
+recon/
+reports/
+config.json
+*.burp
+*.json.bak
+TODOS.md
+
+# API keys and tokens
+.env
+secrets.txt
+api_keys.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# Logs
+*.log
+*.txt.bak
+
+# Tool output
+*.out
+nmap-output/
+
+# Sensitive credential files
+*.key
+*.pem
+*.cert
+credentials/
+hunt_memory/

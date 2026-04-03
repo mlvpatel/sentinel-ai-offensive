@@ -1,0 +1,163 @@
+name: CI — Sentinel AI Offensive
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint & Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Python syntax check
+        run: |
+          python3 -c "
+          import py_compile, os, sys
+          errors = []
+          for root, dirs, files in os.walk('.'):
+              if '.git' in root or '__pycache__' in root:
+                  continue
+              for f in files:
+                  if f.endswith('.py'):
+                      path = os.path.join(root, f)
+                      try:
+                          py_compile.compile(path, doraise=True)
+                      except py_compile.PyCompileError as e:
+                          errors.append(str(e))
+          if errors:
+              for e in errors:
+                  print(f'FAIL: {e}')
+              sys.exit(1)
+          else:
+              print(f'All Python files compile successfully')
+          "
+
+      - name: Shell script syntax check
+        run: |
+          find . -name "*.sh" ! -path "./.git/*" | while read -r f; do
+            bash -n "$f" || exit 1
+            echo "OK: $f"
+          done
+
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: Run tests
+        run: python3 -m pytest tests/ -v --tb=short
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for hardcoded secrets
+        run: |
+          echo "Scanning for hardcoded secrets..."
+          # Check for common secret patterns
+          FOUND=0
+          for pattern in "AKIA[0-9A-Z]{16}" "ghp_[a-zA-Z0-9]{36}" "sk-[a-zA-Z0-9]{48}" "-----BEGIN.*PRIVATE KEY-----"; do
+            if grep -rlE "$pattern" --include="*.py" --include="*.sh" --include="*.md" --include="*.json" . 2>/dev/null | grep -v ".git/" | grep -v "SKILL.md" | grep -v "docs/" | grep -v "skills/" | grep -v "rules/"; then
+              echo "WARNING: Possible secret pattern found: $pattern"
+              FOUND=1
+            fi
+          done
+          if [ $FOUND -eq 0 ]; then
+            echo "No hardcoded secrets found"
+          fi
+
+      - name: Verify .gitignore covers sensitive files
+        run: |
+          echo "Checking .gitignore..."
+          for pattern in ".env" "findings/" "recon/" "reports/" "config.json" "*.key" "*.pem" "credentials/" "TODOS.md"; do
+            if grep -q "$pattern" .gitignore; then
+              echo "OK: $pattern in .gitignore"
+            else
+              echo "MISSING: $pattern not in .gitignore"
+              exit 1
+            fi
+          done
+
+  structure:
+    name: Repository Structure
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify required files exist
+        run: |
+          for f in README.md CLAUDE.md CHANGELOG.md LICENSE SECURITY.md COMPLIANCE.md ARCHITECTURE.md CONTRIBUTING.md CODE_OF_CONDUCT.md SKILL.md install.sh; do
+            if [ -f "$f" ]; then
+              echo "OK: $f"
+            else
+              echo "MISSING: $f"
+              exit 1
+            fi
+          done
+
+      - name: Verify directory structure
+        run: |
+          for d in skills commands agents tools memory mcp tests rules hooks docs web3 scripts wordlists; do
+            if [ -d "$d" ]; then
+              echo "OK: $d/ ($(find $d -type f | wc -l) files)"
+            else
+              echo "MISSING: $d/"
+              exit 1
+            fi
+          done
+
+      - name: Verify skill domains
+        run: |
+          EXPECTED=11
+          ACTUAL=$(ls -d skills/*/ | wc -l)
+          echo "Skills: $ACTUAL directories (expected: $EXPECTED)"
+          if [ "$ACTUAL" -ne "$EXPECTED" ]; then
+            echo "Skill count mismatch!"
+            exit 1
+          fi
+
+      - name: Verify commands
+        run: |
+          EXPECTED=13
+          ACTUAL=$(ls commands/*.md | wc -l)
+          echo "Commands: $ACTUAL files (expected: $EXPECTED)"
+          if [ "$ACTUAL" -ne "$EXPECTED" ]; then
+            echo "Command count mismatch!"
+            exit 1
+          fi
+
+      - name: Verify agents
+        run: |
+          EXPECTED=7
+          ACTUAL=$(ls agents/*.md | wc -l)
+          echo "Agents: $ACTUAL files (expected: $EXPECTED)"
+          if [ "$ACTUAL" -ne "$EXPECTED" ]; then
+            echo "Agent count mismatch!"
+            exit 1
+          fi
