@@ -1,5 +1,5 @@
 # Runtime dependencies for Sentinel AI Offensive tooling.
 # Optional LLM backends (ollama, anthropic, langgraph/langchain) are imported
 # lazily by agent.py/brain.py and are not required for the core tools.
-requests>=2.31.0
+requests>=2.34.2
 certifi>=2024.2.2
