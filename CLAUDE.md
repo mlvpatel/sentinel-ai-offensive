@@ -2,6 +2,8 @@
 
 This repo is a Claude Code plugin for professional offensive security — bug bounty hunting, VAPT, SAST analysis, and network penetration testing across HackerOne, Bugcrowd, Intigriti, and Immunefi.
 
+A deterministic **trust layer** backs the plugin: a scope-attested audit chain (`tools/attest.py`), a K-repro oracle (`tools/oracle.py`), and an expected-value prior over your own hit/miss history (`memory/prior.py`).
+
 ## What's Here
 
 ### Skills (11 domains)
@@ -63,6 +65,8 @@ This repo is a Claude Code plugin for professional offensive security — bug bo
 - `tools/intel_engine.py` — on-demand intel with memory context
 - `tools/scope_checker.py` — deterministic scope safety checker
 - `tools/cicd_scanner.sh` — GitHub Actions workflow scanner (sisakulint wrapper, remote scan)
+- `tools/attest.py` — verifies the audit log's tamper-evident hash chain and proves scope-clean (exits 1 if any request went out of scope): `python3 tools/attest.py <audit.jsonl>`
+- `tools/oracle.py` — `repro_gate`: a finding is REAL only if a deterministic predicate fires K/K, else it routes to a needs-manual lane (the model never mints a finding)
 
 ### MCP Integrations (in `mcp/`)
 
@@ -73,7 +77,8 @@ This repo is a Claude Code plugin for professional offensive security — bug bo
 
 - `memory/hunt_journal.py` — append-only hunt log (JSONL)
 - `memory/pattern_db.py` — cross-target pattern learning
-- `memory/audit_log.py` — request audit log, rate limiter, circuit breaker
+- `memory/prior.py` — expected-value Beta prior over your own confirm/reject history plus dead-end negative memory, wired into `pattern_db.match()`
+- `memory/audit_log.py` — hash-chained request audit log (`prev_hash`/`entry_hash`, `verify_chain()`), rate limiter, circuit breaker
 - `memory/schemas.py` — schema validation for all data
 
 ## Start Here

@@ -1,14 +1,14 @@
-# Compliance & Regulatory Alignment
+# Control Mapping & Framework Reference
 
 <div align="center">
 
-**Sentinel AI Offensive v1.0.0** · Compliance Control Mapping
+**Sentinel AI Offensive v1.0.0** · Control-Mapping Reference (not a certification)
 
-[![NIST](https://img.shields.io/badge/NIST-Compliant-0071C5.svg?style=flat-square)](#nist-cybersecurity--ai-profile)
-[![SOC 2](https://img.shields.io/badge/SOC_2-Aligned-4A154B.svg?style=flat-square)](#soc-2-type-ii-trust-service-criteria)
-[![GDPR](https://img.shields.io/badge/GDPR-Aligned-003399.svg?style=flat-square)](#gdpr--eu-ai-act)
-[![ISO 27001](https://img.shields.io/badge/ISO_27001-Controls-2EA44F.svg?style=flat-square)](#iso-27001--information-security)
-[![ISO 42001](https://img.shields.io/badge/ISO_42001-AI_Mgmt-6C3483.svg?style=flat-square)](#iso-42001--ai-management-system)
+[![NIST](https://img.shields.io/badge/NIST-Control_Mapping-0071C5.svg?style=flat-square)](#nist-cybersecurity--ai-profile)
+[![SOC 2](https://img.shields.io/badge/SOC_2-Control_Mapping-4A154B.svg?style=flat-square)](#soc-2-type-ii-trust-service-criteria)
+[![GDPR](https://img.shields.io/badge/GDPR-Control_Mapping-003399.svg?style=flat-square)](#gdpr--eu-ai-act)
+[![ISO 27001](https://img.shields.io/badge/ISO_27001-Control_Mapping-2EA44F.svg?style=flat-square)](#iso-27001--information-security)
+[![ISO 42001](https://img.shields.io/badge/ISO_42001-Control_Mapping-6C3483.svg?style=flat-square)](#iso-42001--ai-management-system)
 
 </div>
 
@@ -16,7 +16,10 @@
 
 ## Overview
 
-This document maps Sentinel AI Offensive's security controls to five regulatory frameworks. Each control is linked to its implementing code, enabling auditors and reviewers to verify claims against actual implementation.
+> [!IMPORTANT]
+> **This is a control-mapping aid, not a certification.** Sentinel AI Offensive is **not certified, audited, or assessed** against NIST, SOC 2, GDPR, ISO 27001, or ISO 42001. The tables below map the project's engineering controls to concepts in those frameworks to help you run engagements responsibly and to give reviewers a starting point. They are a **reference and alignment aid** — nothing here constitutes a claim of compliance, and no framework body has reviewed this project. Verify every mapping against the linked code before relying on it.
+
+This document maps Sentinel AI Offensive's security controls to concepts in five well-known frameworks. Each control is linked to its implementing code, so reviewers can check the mapping against the actual implementation rather than take it on faith.
 
 ```mermaid
 graph TB
@@ -29,8 +32,9 @@ graph TB
         ISO42["🤖 ISO 42001\nAI Mgmt"]
     end
 
-    subgraph CONTROLS["🛡️ Platform Controls"]
-        AUDIT["Audit Log\naudit_log.py"]
+    subgraph CONTROLS["🛡️ Engineering Controls"]
+        AUDIT["Audit Log (hash-chained)\naudit_log.py"]
+        ATTEST["Scope Attestation\nattest.py"]
         SCOPE["Scope Checker\nscope_checker.py"]
         CIRCUIT["Circuit Breaker\nRateLimiter"]
         SCHEMA["Schema Validation\nschemas.py"]
@@ -41,9 +45,9 @@ graph TB
     end
 
     NIST --> CIRCUIT & SAFE
-    SOC2 --> AUDIT & SCOPE & CRED
+    SOC2 --> AUDIT & ATTEST & SCOPE & CRED
     GDPR --> AUDIT & SCHEMA & JOURNAL
-    ISO27 --> SCOPE & CRED & VALIDATE
+    ISO27 --> SCOPE & ATTEST & CRED & VALIDATE
     ISO42 --> JOURNAL & SCHEMA & VALIDATE
 
     style NIST fill:#0071C5,stroke:#fff,color:#fff
@@ -52,6 +56,7 @@ graph TB
     style ISO27 fill:#2EA44F,stroke:#fff,color:#fff
     style ISO42 fill:#6C3483,stroke:#fff,color:#fff
     style AUDIT fill:#1a1a2e,stroke:#e94560,color:#fff
+    style ATTEST fill:#1a1a2e,stroke:#e94560,color:#fff
     style SCOPE fill:#1a1a2e,stroke:#e94560,color:#fff
     style CIRCUIT fill:#1a1a2e,stroke:#e94560,color:#fff
     style SCHEMA fill:#1a1a2e,stroke:#e94560,color:#fff
@@ -77,7 +82,7 @@ graph TB
 | **PR.DS-01** | Data-at-rest protection | Sensitive output directories in `.gitignore`; credential store masks all secrets | `.gitignore`, `tools/credential_store.py` |
 | **PR.DS-02** | Data-in-transit protection | All outbound requests via HTTPS; MCP integrations use TLS | `mcp/hackerone-mcp/server.py` → SSL context |
 | **DE.AE-01** | Anomaly detection in AI operations | Circuit breaker detects failure patterns (consecutive 403/429/timeout) | `memory/audit_log.py` → `CircuitBreaker.record_failure()` |
-| **DE.CM-01** | Continuous monitoring of operations | Immutable JSONL audit log records every outbound request with timestamp + agent identity | `memory/audit_log.py` → `AuditLogger` |
+| **DE.CM-01** | Continuous monitoring of operations | Append-only, hash-chained JSONL audit log records every outbound request with timestamp + agent identity; each entry carries `prev_hash`/`entry_hash` for tamper-evidence | `memory/audit_log.py` → `AuditLogger`, `verify_chain()` |
 | **RS.RP-01** | Incident response plan documented | Security policy with severity classification and response timelines | `SECURITY.md` |
 
 ---
@@ -95,7 +100,7 @@ graph TB
 | **CC6.1** | Logical access controls | Scope checker enforces deterministic domain matching; credential store for auth | `tools/scope_checker.py`, `tools/credential_store.py` |
 | **CC6.2** | System access restrictions | Agent-level access control — each agent limited to specific tools and models | `agents/*.md` → tool_access definitions |
 | **CC6.3** | System access removal | Session hooks clear state; no persistent auth tokens in memory | `hooks/hooks.json` |
-| **CC7.1** | System monitoring | Audit log records every request; rate limiter tracks per-host request counts | `memory/audit_log.py` |
+| **CC7.1** | System monitoring | Hash-chained audit log records every request; rate limiter tracks per-host request counts; `attest.py` verifies the chain and proves the run stayed in scope (exits non-zero on any out-of-scope request) | `memory/audit_log.py`, `tools/attest.py` |
 | **CC7.2** | Anomaly and incident detection | Circuit breaker pattern detects repeated failures and triggers automatic stop | `memory/audit_log.py` → `CircuitBreaker` |
 | **CC8.1** | Change management | Changelog maintained; semantic versioning; git-based history | `CHANGELOG.md` |
 | **A1.1** | Availability — recovery from disruptions | `/resume` command recovers previous hunt state; hunt journal persists across sessions | `commands/resume.md`, `memory/hunt_journal.py` |
@@ -110,11 +115,11 @@ graph TB
 |:---|:---|:---|:---|
 | **Art. 5(1)(c)** | Data minimization | Hunt memory stores only technical data (endpoints, vuln class, PoC commands); no PII (names, emails, personal data) stored | `memory/schemas.py` → schema fields |
 | **Art. 5(1)(e)** | Storage limitation | Findings stored per-target in isolated directories; no cross-target PII correlation | Directory structure: `findings/{target}/` |
-| **Art. 12** | Transparent and traceable processing | Immutable JSONL audit log with timestamps, agent identity, target, and action type | `memory/audit_log.py` → `AuditLogger.log()` |
+| **Art. 12** | Transparent and traceable processing | Append-only, hash-chained JSONL audit log with timestamps, agent identity, target, and action type; `attest.py` reproduces and verifies the chain after the fact | `memory/audit_log.py` → `AuditLogger.log()`, `tools/attest.py` |
 | **Art. 17** | Right to erasure (RTBF) | No PII stored in hunt memory; all data is technical endpoint/vulnerability data; target directories can be deleted cleanly | `memory/` module stores no personal data |
 | **Art. 25** | Data protection by design | Credential store masks all secrets; `.gitignore` excludes sensitive output; schema validation prevents unstructured data | `tools/credential_store.py`, `.gitignore` |
 | **Art. 30** | Records of processing activities | Hunt journal maintains append-only processing log | `memory/hunt_journal.py` |
-| **Art. 32** | Security of processing | Defense-in-depth stack: scope check → rate limit → circuit breaker → validation → audit log | See Runtime Security Controls in `SECURITY.md` |
+| **Art. 32** | Security of processing | Defense-in-depth stack: scope check → rate limit → circuit breaker → validation → hash-chained audit log → post-run scope attestation | `SECURITY.md`, `tools/scope_checker.py`, `tools/attest.py` |
 | **EU AI Act Art. 9** | Risk management system for AI | Threat model with 8 attack vectors; circuit breaker for autonomous mode; human oversight via checkpoints | `SECURITY.md`, `memory/audit_log.py` |
 | **EU AI Act Art. 13** | Transparency — AI system documentation | All agent behaviors documented; skill files contain full decision trees; audit log traces all AI actions | `agents/*.md`, `skills/*/SKILL.md` |
 | **EU AI Act Art. 14** | Human oversight measures | 3 checkpoint modes (paranoid/normal/yolo); elicitation pauses before destructive actions; `/validate` gate before report | `commands/autopilot.md`, `tools/validate.py` |
@@ -125,7 +130,7 @@ graph TB
 
 > Reference: [ISO/IEC 27001:2022](https://www.iso.org/standard/27001) Annex A Controls
 
-| Control | Title | Implementation | Status |
+| Control | Title | Implementation | Mapped To |
 |:---|:---|:---|:---|
 | **A.5.1** | Policies for information security | Security policy documented with threat model, SDL, incident response | ✅ `SECURITY.md` |
 | **A.5.10** | Acceptable use of information assets | Scope checker enforces authorized testing only; rules mandate scope verification | ✅ `tools/scope_checker.py`, `rules/hunting.md` |
@@ -136,7 +141,7 @@ graph TB
 | **A.8.5** | Secure authentication | Credential store with masked output; no hardcoded secrets; environment variables only | ✅ `tools/credential_store.py` |
 | **A.8.9** | Configuration management | Example config provided; actual config excluded from git; schema-validated settings | ✅ `config.example.json`, `.gitignore` |
 | **A.8.12** | Data leakage prevention | Credential store masks secrets in `repr()`/`str()`; no PII in hunt memory; audit log is append-only | ✅ `tools/credential_store.py` |
-| **A.8.15** | Logging | Immutable JSONL audit log with timestamp, agent ID, target, action | ✅ `memory/audit_log.py` |
+| **A.8.15** | Logging | Append-only, hash-chained JSONL audit log with timestamp, agent ID, target, action; `verify_chain()` and `attest.py` detect tampering | ✅ `memory/audit_log.py`, `tools/attest.py` |
 | **A.8.16** | Monitoring activities | Per-host rate limiter; circuit breaker with configurable thresholds | ✅ `memory/audit_log.py` |
 | **A.8.24** | Use of cryptography | All outbound requests via HTTPS/TLS; SSL context with certificate verification | ✅ `mcp/hackerone-mcp/server.py` |
 | **A.8.25** | Secure development lifecycle | Security review checklist; code contribution requirements; dependency pinning | ✅ `SECURITY.md` → SDL |
@@ -149,7 +154,7 @@ graph TB
 
 > Reference: [ISO/IEC 42001:2023](https://www.iso.org/standard/81230.html) — Requirements for AI Management Systems
 
-| Clause | Requirement | Implementation | Status |
+| Clause | Requirement | Implementation | Mapped To |
 |:---|:---|:---|:---|
 | **5.2** | AI policy | AI agent behaviors documented; ethical use policy in README and rules | ✅ `rules/hunting.md`, `README.md` |
 | **6.1.2** | AI risk assessment | Threat model with 8 attack vectors; CVSS-based severity classification | ✅ `SECURITY.md` |
@@ -175,7 +180,7 @@ graph TB
 | **Assume breach** | Circuit breaker assumes network is hostile; stops on repeated failures | `memory/audit_log.py` → `CircuitBreaker` |
 | **Verify explicitly** | 4-gate validation verifies every finding before report | `tools/validate.py` → 4 sequential gates |
 | **Limit blast radius** | Per-host rate limiting prevents single target abuse; safe method policy blocks destructive operations | `memory/audit_log.py` → `RateLimiter`, `SafeMethodPolicy` |
-| **Log everything** | Immutable audit log captures every outbound request and agent action | `memory/audit_log.py` → `AuditLogger` |
+| **Log everything** | Append-only, hash-chained audit log captures every outbound request and agent action; `attest.py` verifies the chain and scope after the run | `memory/audit_log.py` → `AuditLogger`, `tools/attest.py` |
 | **Pinned dependencies** | No floating versions; `--ignore-scripts` for npm; Go binaries from source | `install.sh`, `install_tools.sh` |
 
 ---
@@ -222,15 +227,20 @@ assert 'super_secret' not in repr(cs)
 print('✅ Credential store masking verified')
 "
 
-# 5. Run full test suite
+# 5. Verify the audit chain is tamper-evident and scope-clean
+#    (exits non-zero if any request went out of scope or the chain is broken)
+python3 tools/attest.py path/to/audit.jsonl
+
+# 6. Run full test suite
 python3 -m pytest tests/ -v
 ```
 
-### Compliance Audit Checklist
+### Control-Mapping Review Checklist
 
 ```
 [ ] All outbound requests flow through scope_checker.py
-[ ] All outbound requests logged via audit_log.py
+[ ] All outbound requests logged via audit_log.py (hash-chained)
+[ ] Audit chain verified tamper-evident + scope-clean (tools/attest.py exits 0)
 [ ] All findings validated via validate.py (4-gate)
 [ ] All data entries validated via schemas.py
 [ ] No hardcoded secrets in source (run: trufflehog, gitleaks)
@@ -247,8 +257,8 @@ python3 -m pytest tests/ -v
 
 <div align="center">
 
-**Compliance is built into the architecture, not bolted on after the fact.**
+**These controls are built into the architecture, not bolted on after the fact — but this document is a mapping aid, not a certification.**
 
-For compliance questions, contact [@mlvpatel](https://github.com/mlvpatel).
+For control-mapping questions, contact [@mlvpatel](https://github.com/mlvpatel).
 
 </div>

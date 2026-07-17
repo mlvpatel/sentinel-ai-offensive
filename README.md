@@ -68,7 +68,29 @@ What separates Sentinel from "an AI that runs scanners": the parts that must be 
 
 ## Architecture
 
-Five layers: skills/commands (Claude Code) → 7 agents → invoked security tools → the deterministic Python library → local hunt memory. Full detail in [ARCHITECTURE.md](ARCHITECTURE.md).
+Five layers, with a hard rule: **the reasoning (Claude) proposes, but the deterministic Python library disposes.** Scope safety, the audit trail, and finding validation are code — not a model's judgment. Full detail in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+```mermaid
+flowchart TD
+    OP([Operator]) --> CC
+    subgraph PLUGIN["Claude Code plugin surface"]
+        CC["11 skills · 13 commands · 2 always-active rules"]
+    end
+    CC --> AG["7 agents<br/>recon · validator · report-writer<br/>chain-builder · autopilot · ranker · web3"]
+    AG -->|proposes a step| LIB
+    subgraph LIB["Deterministic Python library (tested)"]
+        SCOPE["scope_checker<br/>in-scope? (set match)"]
+        ORACLE["oracle<br/>REAL only on K/K"]
+        ATTEST["attest<br/>scope-clean proof"]
+    end
+    LIB -->|only if in scope| TOOLS["Invoked tools<br/>subfinder · nuclei · semgrep<br/>nmap · IDOR/SSRF/XSS probes"]
+    TOOLS --> MEM
+    subgraph MEM["Local hunt memory (zero egress)"]
+        J["hunt_journal"] --- P["pattern_db + prior (EV)"] --- A["audit_log (hash-chained)"]
+    end
+    MCP["MCP: Burp · HackerOne"] -.-> CC
+    A -.->|verify_chain| ATTEST
+```
 
 ```
 skills/ commands/ agents/ rules/ hooks/     # the Claude Code plugin surface
@@ -78,6 +100,34 @@ mcp/                                          # burp · hackerone
 web3/  wordlists/  docs/                       # smart-contract content, lists, docs
 ```
 
+## The math behind the trust layer
+
+The trust layer is small on purpose, and every part reduces to a formula you can check — not a model's opinion.
+
+**1 · Expected-value prioritization (Beta–Bernoulli).**
+Each vuln class $C$ has a history of $s$ confirmed and $f$ rejected findings. With a uniform $\mathrm{Beta}(1,1)$ prior, the posterior mean probability of a confirm is
+
+$$\hat{p}(C) = \frac{s+1}{s+f+2}, \qquad \mathrm{EV}(C) = \hat{p}(C)\times \mathrm{median\_payout}(C).$$
+
+Patterns are ranked by $\mathrm{EV}$ (highest first), and a class is a **dead end** — hard-dropped — when $s=0$ and $f\ge 3$ (never paid, rejected enough to be confident). This is [`memory/prior.py`](memory/prior.py), wired into `pattern_db.match()`.
+
+**2 · Deterministic reproducibility (the K-repro Oracle).**
+A finding is **REAL only if its deterministic predicate fires on all $K$ independent replays** (default $K=3$). If a check is genuinely flaky and fires with per-trial probability $q$, the chance it *falsely* passes is
+
+$$P(\text{false REAL}) = q^{K}.$$
+
+The gate also demands determinism: a result of $1/3$ or $2/3$ is **FLAKY → needs-manual**, never auto-submitted. The model never adjudicates a bug. This is [`tools/oracle.py`](tools/oracle.py).
+
+**3 · Tamper-evident scope attestation (hash chain).**
+Every audit entry $e_i$ carries a link to the previous one:
+
+$$h_i = \mathrm{SHA\text{-}256}\big(\,\text{canonical}(e_i)\ \|\ h_{i-1}\,\big), \qquad h_0 = 0^{64}.$$
+
+Because SHA-256 is second-preimage resistant, editing, reordering, or deleting *any* past entry changes its hash and breaks every later link. `verify_chain()` recomputes the chain and asserts every request had `scope_check == "pass"`; the final hash $h_n$ (the **chain head**) is a 256-bit commitment to the whole log. [`tools/attest.py`](tools/attest.py) exits non-zero if the chain is broken or any request went out of scope — cryptographic proof the hunt stayed in bounds.
+
+**4 · Scope safety is a set operation, not a guess.**
+A target is in scope **iff** it matches an in-scope pattern and no exclusion — deterministic suffix/exclusion matching in [`tools/scope_checker.py`](tools/scope_checker.py). CVSS 3.1 severity uses the standard base-score formula ([`tools/validate.py`](tools/validate.py)).
+
 ## Safety & authorized use
 
 - **Scope first, always.** `tools/scope_checker.py` gates targets deterministically; the audit log + `attest.py` prove compliance after the fact.
@@ -85,9 +135,19 @@ web3/  wordlists/  docs/                       # smart-contract content, lists, 
 - **Compliance mapping, not certification.** [COMPLIANCE.md](COMPLIANCE.md) maps controls to NIST CSF / GDPR / ISO 27001 concepts to help you run engagements responsibly — it is a control-mapping aid, not a claim of certified compliance.
 - See [SECURITY.md](SECURITY.md) for the threat model and reporting.
 
-## Contributing & license
+## Repository security
 
-Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) (branch naming, commit conventions, and the security checklist). MIT licensed ([LICENSE](LICENSE)). By contributing you agree your work is for **authorized security testing only**.
+This is a public repo, so it's built to hold no secrets and prove it: credentials and tokens are read from **environment variables only** (never committed), `.gitignore` excludes findings, recon output, reports, keys, and `.env`, and CI runs a secret-scan job plus **CodeQL** on every push. The audit trail itself is tamper-evident (see the math above), and `tools/attest.py` lets anyone verify a hunt stayed in scope. Report a vulnerability privately via [SECURITY.md](SECURITY.md) — please don't open a public issue for one.
+
+## License
+
+Released under the [**MIT License**](LICENSE) — you may use, modify, distribute, and build on this code, including commercially, provided you keep the copyright and license notice. It is provided **as-is, without warranty**.
+
+**One thing the license does *not* grant: permission to attack.** MIT covers the *code*, not your *targets*. Running these tools against any system you do not own or are not explicitly authorized to test (a bug-bounty program's written scope, a signed engagement, or your own lab) is illegal regardless of this license. Use it in bounds — that's the whole point of the trust layer.
+
+## Contributing
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for branch naming, commit conventions, and the security checklist. By contributing you agree your work is for authorized security testing only and is licensed under MIT.
 
 <div align="center">
 <sub>Built by <a href="https://github.com/mlvpatel">Malav Patel</a> · offensive security, done in bounds.</sub>
