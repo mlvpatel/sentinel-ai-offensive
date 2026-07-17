@@ -1,10 +1,14 @@
 version: 2
 updates:
-  - package-ecosystem: "npm"
+  # Python runtime deps (requirements.txt)
+  - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
-  - package-ecosystem: "pip"
+
+  # Keep GitHub Actions pinned versions current (prevents the CodeQL v2
+  # deprecation breakage from recurring).
+  - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"

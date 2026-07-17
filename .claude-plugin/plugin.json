@@ -1,0 +1,12 @@
+{
+  "name": "sentinel-ai-offensive",
+  "version": "1.0.0",
+  "description": "Professional offensive-security plugin: bug bounty, VAPT, SAST, and network pentesting across HackerOne, Bugcrowd, Intigriti, and Immunefi.",
+  "author": {
+    "name": "mlvpatel",
+    "url": "https://github.com/mlvpatel"
+  },
+  "homepage": "https://github.com/mlvpatel/sentinel-ai-offensive",
+  "license": "MIT",
+  "hooks": "./hooks/hooks.json"
+}
