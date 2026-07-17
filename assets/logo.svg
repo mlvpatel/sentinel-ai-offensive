@@ -1,0 +1,32 @@
+<svg width="680" height="170" viewBox="0 0 680 170" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sentinel AI Offensive">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="680" y2="170" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#161b22"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="26" y1="30" x2="144" y2="140" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff7a45"/>
+      <stop offset="1" stop-color="#ff3d3d"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="1" y="1" width="678" height="168" rx="20" fill="url(#bg)" stroke="#30363d" stroke-width="1.5"/>
+
+  <!-- shield -->
+  <g transform="translate(38,30)">
+    <path d="M52 2 L100 20 V56 C100 92 78 108 52 116 C26 108 4 92 4 56 V20 Z"
+          fill="none" stroke="url(#accent)" stroke-width="4.5" stroke-linejoin="round"/>
+    <!-- radar sweep + crosshair -->
+    <circle cx="52" cy="58" r="30" fill="none" stroke="#30363d" stroke-width="2"/>
+    <circle cx="52" cy="58" r="16" fill="none" stroke="#30363d" stroke-width="2"/>
+    <line x1="52" y1="20" x2="52" y2="96" stroke="#30363d" stroke-width="1.5"/>
+    <line x1="14" y1="58" x2="90" y2="58" stroke="#30363d" stroke-width="1.5"/>
+    <path d="M52 58 L82 40" stroke="url(#accent)" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="52" cy="58" r="5" fill="url(#accent)"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="176" y="82" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="52" font-weight="800" letter-spacing="1" fill="#e6edf3">SENTINEL</text>
+  <text x="178" y="112" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" font-weight="700" letter-spacing="5" fill="#ff7a45">AI · OFFENSIVE</text>
+  <text x="178" y="140" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="400" letter-spacing="0.5" fill="#8b949e">Authorized security testing · bug bounty · VAPT · SAST · network</text>
+</svg>
