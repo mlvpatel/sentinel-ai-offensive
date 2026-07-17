@@ -6,6 +6,7 @@ Used for post-session review and scope compliance verification.
 """
 
 import fcntl
+import hashlib
 import json
 import os
 import sys
@@ -14,24 +15,61 @@ from pathlib import Path
 
 from memory.schemas import validate_audit_entry, make_audit_entry, SchemaError
 
+# First-link predecessor for the tamper-evident hash chain.
+GENESIS_HASH = "0" * 64
+
+
+def _entry_hash(entry: dict) -> str:
+    """sha256 over the entry's canonical JSON, excluding entry_hash itself."""
+    payload = {k: v for k, v in entry.items() if k != "entry_hash"}
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
 
 class AuditLog:
-    """Append-only audit log for tracking outbound requests."""
+    """Append-only audit log for tracking outbound requests.
+
+    Each entry is hash-chained: entry_hash = sha256(entry incl. prev_hash), and
+    prev_hash points at the previous entry's hash. Any edit to a past entry breaks
+    the chain, so verify_chain() gives a tamper-evident, scope-attested trail.
+    """
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
+    def _tail_hash(self) -> str:
+        """entry_hash of the last line, or GENESIS_HASH for an empty/absent log."""
+        if not self.path.exists():
+            return GENESIS_HASH
+        last = None
+        with open(self.path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    last = line
+        if last is None:
+            return GENESIS_HASH
+        try:
+            return json.loads(last).get("entry_hash", GENESIS_HASH)
+        except json.JSONDecodeError:
+            return GENESIS_HASH
+
     def log(self, entry: dict) -> None:
-        """Validate and append an audit entry."""
+        """Validate, hash-chain, and append an audit entry."""
         validated = validate_audit_entry(entry)
-        line = json.dumps(validated, separators=(",", ":")) + "\n"
-        encoded = line.encode("utf-8")
 
         fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX)
             try:
+                # ponytail: chaining reads the tail under the lock → O(n) per append.
+                # Negligible at hunt scale; add a sidecar head-pointer if logs grow huge.
+                chained = dict(validated)
+                chained["prev_hash"] = self._tail_hash()
+                chained["entry_hash"] = _entry_hash(chained)
+                line = json.dumps(chained, sort_keys=True, separators=(",", ":")) + "\n"
+                encoded = line.encode("utf-8")
                 written = os.write(fd, encoded)
                 if written != len(encoded):
                     raise OSError(f"Partial write: {written}/{len(encoded)} bytes")
@@ -91,6 +129,39 @@ class AuditLog:
             "pass": sum(1 for e in entries if e.get("scope_check") == "pass"),
             "fail": sum(1 for e in entries if e.get("scope_check") == "fail"),
             "errors": sum(1 for e in entries if e.get("error")),
+        }
+
+    def verify_chain(self) -> dict:
+        """Verify the hash chain and scope attestation.
+
+        Walks the log confirming each entry_hash and prev_hash link. Reports the
+        first break (tampering/truncation) and any request whose scope_check was
+        not 'pass'. scope_clean is True only when the chain is intact AND every
+        request was in scope — the machine-checkable "we never went out of scope".
+        """
+        entries = self.read_all()
+        prev = GENESIS_HASH
+        broken_at = None
+        violations = []
+        for i, e in enumerate(entries):
+            if e.get("prev_hash") != prev or e.get("entry_hash") != _entry_hash(e):
+                broken_at = i
+                break
+            if e.get("scope_check") != "pass":
+                violations.append({
+                    "index": i,
+                    "url": e.get("url"),
+                    "scope_check": e.get("scope_check"),
+                })
+            prev = e.get("entry_hash")
+        return {
+            "total": len(entries),
+            "verified": broken_at if broken_at is not None else len(entries),
+            "intact": broken_at is None,
+            "broken_at": broken_at,
+            "chain_head": prev,
+            "scope_violations": violations,
+            "scope_clean": broken_at is None and not violations,
         }
 
 

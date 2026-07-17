@@ -195,8 +195,27 @@ def gate_header(n: int, name: str, status: str | None = None):
 
 # ─── Gate implementations ─────────────────────────────────────────────────────
 
-def gate1_is_real() -> tuple[bool, dict]:
+def gate1_is_real(predicate=None, k: int = 3, rate_limiter=None, host: str | None = None) -> tuple[bool, dict]:
     gate_header(1, "Is It Real?")
+
+    # Deterministic path: a predicate over replayable evidence judges reproducibility
+    # K/K times — the Oracle, not a human answering "yes it reproduces".
+    if predicate is not None:
+        from oracle import repro_gate
+        res = repro_gate(predicate, k=k, rate_limiter=rate_limiter, host=host)
+        passed = res["verdict"] == "REAL"
+        color = GREEN if passed else (YELLOW if res["verdict"] == "FLAKY" else RED)
+        print(f"  {color}Oracle K-repro: {res['reproduced']}/{res['trials']} → {res['verdict']}{RESET}")
+        if res["verdict"] == "FLAKY":
+            print(f"  {DIM}Non-deterministic → NEEDS MANUAL, not auto-submitted.{RESET}")
+        return passed, {
+            "mode": "oracle",
+            "repro_verdict": res["verdict"],
+            "reproduced": f"{res['reproduced']}/{res['trials']}",
+            "deterministic": res["deterministic"],
+        }
+
+    # Interactive fallback (no predicate available for this vuln class).
     print("  Can you reproduce the bug from scratch — clean browser, no Burp artifacts?")
     print()
     repro3   = ask_yn("Reproduced 3/3 times deterministically?")
@@ -206,6 +225,7 @@ def gate1_is_real() -> tuple[bool, dict]:
 
     passed = repro3 and no_burp and no_state and rtfm
     notes = {
+        "mode": "manual",
         "repro_3_3": repro3,
         "works_without_proxy": no_burp,
         "no_special_state": no_state,

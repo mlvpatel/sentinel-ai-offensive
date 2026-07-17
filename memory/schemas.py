@@ -26,7 +26,8 @@ TARGET_OPTIONAL = {
 TARGET_ALL = TARGET_REQUIRED | TARGET_OPTIONAL
 
 AUDIT_REQUIRED = {"ts", "url", "method", "scope_check", "schema_version"}
-AUDIT_OPTIONAL = {"response_status", "finding_id", "session_id", "error"}
+# prev_hash/entry_hash are added by AuditLog at write time to form a tamper-evident chain.
+AUDIT_OPTIONAL = {"response_status", "finding_id", "session_id", "error", "prev_hash", "entry_hash"}
 AUDIT_ALL = AUDIT_REQUIRED | AUDIT_OPTIONAL
 
 VALID_RESULTS = {"confirmed", "rejected", "partial", "informational"}
@@ -246,6 +247,10 @@ def validate_audit_entry(entry: dict) -> dict:
     if "response_status" in entry:
         if not isinstance(entry["response_status"], int):
             raise SchemaError("Audit entry: 'response_status' must be an integer")
+
+    for h in ("prev_hash", "entry_hash"):
+        if h in entry and not isinstance(entry[h], str):
+            raise SchemaError(f"Audit entry: '{h}' must be a string")
 
     return entry
 
