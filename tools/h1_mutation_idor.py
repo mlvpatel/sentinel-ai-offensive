@@ -23,10 +23,13 @@ import time
 BASE = "https://hackerone.com"
 
 def make_ctx():
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return ctx
+    # Verified TLS (fail closed) — this path carries the user's HackerOne
+    # session cookie, so certificate verification must stay on.
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
 
 def get_csrf(cookie: str) -> str:
     req = urllib.request.Request(

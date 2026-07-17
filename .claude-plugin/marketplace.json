@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "sentinel-ai-offensive",
+  "description": "Professional offensive-security plugin for bug bounty, VAPT, SAST, and network pentesting.",
+  "owner": {
+    "name": "mlvpatel",
+    "url": "https://github.com/mlvpatel"
+  },
+  "plugins": [
+    {
+      "name": "sentinel-ai-offensive",
+      "description": "Recon-to-report offensive security: 11 skills, 13 commands, 7 agents, deterministic scope safety, and hunt memory.",
+      "source": "./",
+      "category": "security"
+    }
+  ]
+}

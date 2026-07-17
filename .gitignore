@@ -19,6 +19,9 @@ __pycache__/
 venv/
 *.egg-info/
 
+# Claude Code local (worktrees, session state — never commit)
+.claude/
+
 # macOS
 .DS_Store
 .AppleDouble
