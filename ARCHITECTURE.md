@@ -55,8 +55,9 @@ graph TB
     subgraph L5["Layer 5 — Data"]
         JOURNAL["Hunt Journal\nAppend-only JSONL\nfcntl.flock"]
         PATTERN["Pattern DB\nCross-target learning\nVuln class matching"]
-        AUDIT["Audit Log\nEvery request logged\nRate limiter + Circuit breaker"]
+        AUDIT["Audit Log\nHash-chained (prev_hash/entry_hash)\nRate limiter + Circuit breaker"]
         SCHEMA["Schemas\nVersioned types\nStrict validation"]
+        TRUST["Trust Layer (deterministic)\nattest.py scope attestation\noracle.py K-repro gate\nprior.py EV + negative memory"]
     end
 
     subgraph L6["Layer 6 — Integration"]
@@ -89,6 +90,7 @@ graph TB
     style PATTERN fill:#162447,stroke:#1f4068,color:#fff
     style AUDIT fill:#162447,stroke:#1f4068,color:#fff
     style SCHEMA fill:#162447,stroke:#1f4068,color:#fff
+    style TRUST fill:#0b3d2e,stroke:#2ea44f,color:#fff
     style BURP_MCP fill:#1b1b2f,stroke:#e43f5a,color:#fff
     style H1_MCP fill:#1b1b2f,stroke:#e43f5a,color:#fff
     style NVD fill:#1b1b2f,stroke:#e43f5a,color:#fff
@@ -102,7 +104,7 @@ graph TB
 | **L2 — Orchestration** | Route tasks to agents; enforce rules; select skills | Rules are always active — cannot be overridden |
 | **L3 — Agent** | Execute specialized tasks with appropriate AI model tier | Each agent limited to its defined tool scope |
 | **L4 — Tool** | Run security tools; collect raw output | All output flows through scope checker and audit log |
-| **L5 — Data** | Persist findings, patterns, audit events | Append-only; schema-validated; file-locked |
+| **L5 — Data** | Persist findings, patterns, audit events; attest scope-clean; gate findings | Append-only; schema-validated; file-locked; audit log hash-chained (tamper-evident) |
 | **L6 — Integration** | Connect to external services (Burp, HackerOne, NVD) | HTTPS only; rate-limited; timeout-guarded |
 
 ---
@@ -276,7 +278,7 @@ graph TB
     subgraph STORAGE["Persistent Storage"]
         HJ["hunt_journal.py\nAppend-only JSONL\nfcntl.flock (concurrent-safe)\nPartitioned by target"]
         PDB["pattern_db.py\nCross-target matching\nVuln class + tech stack index\nSuccess rate tracking"]
-        AL["audit_log.py\nEvery outbound request\nTimestamp + agent ID + target\nRate limiter + circuit breaker"]
+        AL["audit_log.py\nEvery outbound request\nHash-chained: prev_hash → entry_hash\nverify_chain() + rate limiter + circuit breaker"]
     end
 
     subgraph QUERY["Query Interface"]
@@ -326,6 +328,25 @@ All schemas are backward-compatible. Migration is handled by `schemas.py`:
 - Unknown fields → preserved (forward compat)
 - Missing fields → default values applied (backward compat)
 
+### Trust Layer (Deterministic)
+
+The trust layer keeps the model out of the "is this real / did I stay in scope" decision. Three
+deterministic components sit on top of the memory system so provenance and repeatability are checkable
+by code, not asserted by prose.
+
+| Component | What it does | Contract |
+|:---|:---|:---|
+| **Tamper-evident audit log** (`memory/audit_log.py`) | Every entry carries a `prev_hash` and an `entry_hash` linking it to the one before it; `verify_chain()` recomputes the chain and fails on any edit, reorder, or deletion. `schemas.py` registers `prev_hash`/`entry_hash` as audit fields. | Chain verifies, or the log is rejected as tampered. |
+| **Scope attestation** (`tools/attest.py`) | Verifies the audit log's hash chain, then proves the engagement stayed scope-clean. Exits `1` if any recorded request went out of scope. `python3 tools/attest.py <audit.jsonl>` | Exit 0 = intact chain + zero out-of-scope requests; exit 1 otherwise. |
+| **K-repro Oracle** (`tools/oracle.py`) | `repro_gate` runs a deterministic predicate K times; a finding is marked REAL only if the predicate fires **K/K**. Anything short of that routes to a **needs-manual** lane. The model never mints a finding on its own. | REAL only on K/K, else needs-manual. |
+| **Expected-value prior** (`memory/prior.py`) | A Beta prior over your own confirm/reject history plus a dead-end negative memory, wired into `pattern_db.match()` so past outcomes (including known dead ends) shift what gets prioritized. | Prioritization reflects observed hit rate, not raw enthusiasm. |
+
+```
+attest.py    →  verify_chain()  →  scope-clean proof   →  exit 0 / 1
+oracle.py    →  repro_gate(K)   →  K/K ? REAL : needs-manual
+prior.py     →  Beta(confirm, reject) + dead-ends  →  pattern_db.match()
+```
+
 ---
 
 ## Security Architecture
@@ -369,8 +390,8 @@ Request Flow:
   └──────┬───────┘                                                │
          ▼                                                        │
   ┌──────────────┐                                                │
-  │ L1: Audit    │◄── Immutable JSONL — every request logged      │
-  │    Log       │                                                │
+  │ L1: Audit    │◄── Hash-chained JSONL — verify_chain()         │
+  │    Log       │    attest.py proves scope-clean (exit 1 = fail)│
   └──────┬───────┘                                                │
          ▼                                                        │
   ┌──────────────┐                                                │
@@ -436,9 +457,11 @@ graph TD
     G3{"Gate 3\nDedup Check"}
     G4{"7-Question Gate\n(15 min max)"}
 
+    ORACLE{"🔁 K-repro Oracle\nrepro_gate — fires K/K?"}
     KILL["🔴 KILL\nDiscard finding"]
     CHAIN["🟡 CHAIN REQUIRED\nEscalate first"]
     DOWN["🟠 DOWNGRADE\nReduce severity"]
+    MANUAL["🟣 NEEDS-MANUAL\nDeterministic repro failed"]
     PASS["🟢 PASS\nReport-worthy"]
 
     F --> G0
@@ -454,13 +477,24 @@ graph TD
     G4 -->|"Any Q = NO"| KILL
     G4 -->|"Weak chain"| DOWN
     G4 -->|"Needs escalation"| CHAIN
-    G4 -->|"All Q = YES"| PASS
+    G4 -->|"All Q = YES"| ORACLE
+    ORACLE -->|"fires K/K"| PASS
+    ORACLE -->|"< K/K"| MANUAL
 
     style KILL fill:#e94560,stroke:#fff,color:#fff
     style CHAIN fill:#fd7014,stroke:#fff,color:#fff
     style DOWN fill:#fd7014,stroke:#fff,color:#fff
+    style MANUAL fill:#533483,stroke:#fff,color:#fff
+    style ORACLE fill:#0b3d2e,stroke:#2ea44f,color:#fff
     style PASS fill:#2ea44f,stroke:#fff,color:#fff
 ```
+
+The 7-Question Gate is human/model judgment; the **K-repro Oracle** (`tools/oracle.py`) is the
+deterministic backstop after it. A finding is only marked **PASS/REAL** when `repro_gate` fires its
+predicate **K/K** — anything short routes to a **needs-manual** lane, so the model never mints a
+finding on its own. Prioritization of what to test first is shaped by the expected-value prior in
+`memory/prior.py` (Beta over past confirm/reject outcomes + dead-end negative memory), wired into
+`pattern_db.match()`.
 
 ---
 
@@ -493,8 +527,8 @@ sentinel-ai-offensive/
 │
 ├── commands/                ← 13 slash commands
 ├── agents/                  ← 7 specialized AI agents
-├── tools/                   ← 25 Python/shell tools
-├── memory/                  ← Persistent hunt memory system
+├── tools/                   ← Python/shell tools (incl. attest.py, oracle.py)
+├── memory/                  ← Hunt memory + trust layer (hash-chained audit, prior.py)
 ├── mcp/                     ← MCP integrations (Burp + HackerOne)
 ├── tests/                   ← Test suite
 ├── rules/                   ← Always-active rules

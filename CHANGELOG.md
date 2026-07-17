@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-07-17 — Trust Layer, Valid Plugin Manifest & Green CI
+
+### Added — Trust Layer
+- `tools/attest.py`: verifies the audit log's tamper-evident hash chain and proves scope-clean, exiting `1` if any request went out of scope (`python3 tools/attest.py <audit.jsonl>`)
+- `tools/oracle.py`: `repro_gate` — a finding is REAL only if a deterministic predicate fires K/K, otherwise it routes to a needs-manual lane (the model never mints a finding)
+- `memory/prior.py`: expected-value Beta prior over your own confirm/reject history plus dead-end negative memory, wired into `pattern_db.match()`
+- `memory/audit_log.py`: hash-chains every entry (`prev_hash`/`entry_hash`) with a `verify_chain()` method; `schemas.py` now registers the `prev_hash`/`entry_hash` audit fields
+
+### Added — Valid Plugin & CI/CD
+- **Valid, installable Claude Code plugin**: `.claude-plugin/plugin.json` + `marketplace.json`; `hooks/hooks.json` valid schema (SessionStart / Stop / SessionEnd); `requirements.txt` (requests, certifi)
+  - Install: `/plugin marketplace add mlvpatel/sentinel-ai-offensive` then `/plugin install sentinel-ai-offensive@sentinel-ai-offensive`
+- **Green CI** — `ci.yml` (lint / test / security / structure) + CodeQL, with all GitHub Actions SHA-pinned; Dependabot configured (pip + github-actions)
+- Agents now pin model **aliases** (`sonnet` / `opus` / `haiku`) instead of dated model IDs
+
+### Fixed
+- TLS-verification fix on the HackerOne path
+
+### Changed — Docs
+- Honest README rewrite — dropped "platform", "orchestrates 25+ tools in 60s", and NIST/GDPR/ISO **certification** claims (the project is a control-mapping/reference aid, not certified)
+- Added `assets/logo.svg`
+
+### Removed
+- Stray `SKILL.md.zip`
+- 1.4 MB `logo.png` (replaced by `assets/logo.svg`)
+
 ## v1.0.0 — Sentinel AI Offensive (Apr 2026)
 
 ### Added — Enterprise Documentation
@@ -78,4 +103,4 @@
 - `install.sh` — One-command skill installation
 - `install_tools.sh` — Go binaries + sisakulint auto-download
 - 5 vendored wordlists
-- 211 tests across 14 test files
+- 238 tests across 15 test files

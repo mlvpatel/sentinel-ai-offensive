@@ -8,6 +8,10 @@
 
 ---
 
+> **Authorized testing only.** This is tooling for offensive security work you are explicitly authorized to perform (bug bounty scope, signed engagement, or systems you own). It is licensed MIT and ships **no secrets or credentials** — all auth material is read from environment variables at runtime and is never committed to the repository.
+
+---
+
 ## Supported Versions
 
 | Version | Supported | Notes |
@@ -136,7 +140,7 @@ graph TB
                 A7["⚡ recon-ranker\nHaiku"]
             end
 
-            subgraph TOOLS["Tool Layer — 25+ tools"]
+            subgraph TOOLS["Tool Layer — Python + shell"]
                 SCOPE["🔒 scope_checker.py\nSuffix-anchored matching"]
                 CRED["🔑 credential_store.py\nMasked output"]
                 RECON_T["🔍 recon_engine.sh\n8-phase pipeline"]
@@ -266,13 +270,15 @@ sequenceDiagram
 | # | Attack Vector | Risk | Mitigation | Implementation |
 |:---|:---|:---|:---|:---|
 | AV-1 | **Credential leakage** in conversation transcript | 🔴 High | Credential store masks secrets; `.env` in `.gitignore` | `tools/credential_store.py` |
-| AV-2 | **Out-of-scope testing** causing legal liability | 🔴 High | Deterministic scope checker with suffix-anchored matching | `tools/scope_checker.py` |
+| AV-2 | **Out-of-scope testing** causing legal liability | 🔴 High | Deterministic scope checker gates every target (suffix-anchored matching); `attest.py` proves the whole session stayed in scope | `tools/scope_checker.py`, `tools/attest.py` |
 | AV-3 | **Destructive HTTP methods** in autopilot mode | 🔴 High | Safe method policy blocks PUT/DELETE/PATCH without approval | `memory/audit_log.py` → `SafeMethodPolicy` |
 | AV-4 | **Runaway autopilot** burning requests / triggering bans | 🟠 High | Circuit breaker + per-host rate limiter | `memory/audit_log.py` → `CircuitBreaker` + `RateLimiter` |
 | AV-5 | **Report submission** without human review | 🟡 Med | 4-gate validation + elicitation checkpoints | `tools/validate.py` |
 | AV-6 | **Dependency supply chain** compromise | 🟡 Med | Pinned versions; `--ignore-scripts` on npm install | `install.sh`, `install_tools.sh` |
-| AV-7 | **Audit log tampering** to hide actions | 🟡 Med | Append-only JSONL with `fcntl.flock` | `memory/hunt_journal.py` |
+| AV-7 | **Audit log tampering** to hide actions | 🟡 Med | Tamper-evident hash-chained audit log (`prev_hash`/`entry_hash`); `verify_chain()` / `attest.py` detect any edit and exit non-zero | `memory/audit_log.py`, `tools/attest.py` |
 | AV-8 | **Sensitive data in hunt memory** | 🟢 Low | Schema validation prevents PII storage; technical data only | `memory/schemas.py` |
+| AV-9 | **TLS interception (MITM)** on outbound API calls | 🟠 High | Verifying TLS context backed by `certifi`'s CA bundle; `certifi` is a required dependency (fixes the prior `CERT_NONE` fallback on the HackerOne path) | `mcp/hackerone-mcp/server.py`, `tools/learn.py`, `requirements.txt` |
+| AV-10 | **Command injection** via shelled-out subprocess | 🟡 Med | No `shell=True` in the tested core (scope checker, oracle, attest, memory); args passed as lists | `tools/scope_checker.py`, `memory/` |
 
 ---
 
@@ -320,7 +326,7 @@ Every PR touching security-critical paths must verify:
 
 | Principle | Implementation |
 |:---|:---|
-| **Minimal dependencies** | Core tools use only Python stdlib; optional deps are clearly documented |
+| **Minimal dependencies** | Core tools use Python stdlib plus two pinned runtime deps (`requests`, `certifi`); everything else is documented and optional |
 | **Pinned versions** | Go binaries installed via `@latest` with version verification |
 | **No lifecycle scripts** | `--ignore-scripts` flag on all npm operations |
 | **SCA scanning** | `pip-audit`, `npm audit`, `govulncheck` in SAST pipeline |
@@ -339,9 +345,21 @@ Layer 5 │ Safe Method Policy            │ Block PUT/DELETE/PATCH in autopilo
 Layer 4 │ Circuit Breaker               │ Stop after N consecutive failures
 Layer 3 │ Per-Host Rate Limiter         │ Prevent target abuse
 Layer 2 │ Scope Checker                 │ Deterministic domain verification
-Layer 1 │ Audit Log                     │ Immutable JSONL event trail
+Layer 1 │ Audit Log                     │ Hash-chained JSONL event trail
 Layer 0 │ Schema Validation             │ Typed, versioned data contracts
 ```
+
+### Trust Layer — Attestable Controls
+
+These controls are tested and produce machine-checkable evidence, so a triager can trust the engine's behavior rather than take it on faith:
+
+| Control | Property | Implementation |
+|:---|:---|:---|
+| **Tamper-evident audit log** | Every entry is hash-chained (`prev_hash` → `entry_hash`). Any edit to a past entry breaks the chain; `verify_chain()` reports the first break. | `memory/audit_log.py`, `memory/schemas.py` |
+| **Deterministic scope attestation** | `python3 tools/attest.py <audit.jsonl>` verifies the chain, prints the chain head, and **exits non-zero if any request's scope check was not `pass`** — a portable "we never went out of scope" proof. | `tools/attest.py` |
+| **Scope gating** | Every target is checked deterministically (suffix-anchored matching) before any request goes out. | `tools/scope_checker.py` |
+| **TLS verification enforced** | Outbound HTTPS uses a verifying TLS context backed by `certifi`'s CA bundle; `certifi` is a required dependency. The earlier `CERT_NONE` fallback on the HackerOne path no longer applies in a normal install. | `mcp/hackerone-mcp/server.py`, `tools/learn.py`, `requirements.txt` |
+| **No `shell=True` in the tested core** | Subprocess calls in the tested core (scope checker, oracle, attest, `memory/`) pass arguments as lists — no shell string interpolation. | `tools/`, `memory/` |
 
 ### Secrets Management
 
@@ -373,7 +391,7 @@ credentials/            # Any credential material
 
 ## Incident Response
 
-### Severity Classification for Platform Incidents
+### Severity Classification for Toolkit Incidents
 
 | Level | Criteria | Response |
 |:---|:---|:---|
@@ -416,23 +434,25 @@ All security tools installed by `install_tools.sh` are verified:
 
 ### SBOM (Software Bill of Materials)
 
-Core dependencies (Python stdlib only — zero third-party runtime deps):
+Core is Python stdlib plus two small pinned runtime deps (`requirements.txt`):
 
 ```
 sentinel-ai-offensive v1.0.0
-├── Python 3.8+ (stdlib only)
+├── Python 3.8+ (stdlib)
 │   ├── json, os, sys, subprocess
 │   ├── urllib.request, urllib.error
 │   ├── datetime, pathlib, hashlib
 │   ├── fcntl (file locking)
 │   └── argparse, dataclasses
+├── Runtime deps (requirements.txt)
+│   ├── requests (HTTP client)
+│   └── certifi (TLS certificate verification)
 ├── External Tools (installed separately)
 │   ├── subfinder, httpx, nuclei, katana
 │   ├── nmap, masscan, ffuf, dalfox
 │   ├── semgrep, trufflehog, gitleaks
 │   └── sisakulint (CI/CD scanner)
 └── Optional
-    ├── certifi (TLS certificate verification)
     └── pytest (development/testing only)
 ```
 
