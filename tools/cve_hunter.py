@@ -17,13 +17,36 @@ import subprocess
 import sys
 from datetime import datetime
 
+import shlex
+import tempfile
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FINDINGS_DIR = os.path.join(BASE_DIR, "findings")
 
+DOMAIN_REGEX = re.compile(
+    r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
+)
+
+
+def validate_domain(domain: str) -> str:
+    """Validate target domain format to prevent command injection and path traversal."""
+    if not domain or not isinstance(domain, str):
+        raise ValueError("Target domain must be a non-empty string.")
+    clean = domain.strip().lower()
+    clean = re.sub(r"^https?://", "", clean).split("/")[0].split(":")[0]
+    if not DOMAIN_REGEX.match(clean):
+        raise ValueError(f"Invalid domain format: {domain!r}")
+    return clean
+
 
 def run_cmd(cmd, timeout=30):
+    """Run command safely without shell=True."""
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        if isinstance(cmd, str):
+            args = shlex.split(cmd)
+        else:
+            args = list(cmd)
+        result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
         return result.returncode == 0, result.stdout.strip()
     except Exception as e:
         return False, str(e)
@@ -31,6 +54,7 @@ def run_cmd(cmd, timeout=30):
 
 def detect_technologies(domain, recon_dir=None):
     """Detect technologies running on the target."""
+    domain = validate_domain(domain)
     print(f"[*] Detecting technologies on {domain}...")
     techs = {}
 
@@ -48,23 +72,28 @@ def detect_technologies(domain, recon_dir=None):
                             if t and not t.isdigit() and len(t) > 1:
                                 techs[t.lower()] = techs.get(t.lower(), 0) + 1
 
-    # Method 2: Direct httpx probe
+    # Method 2: Direct httpx probe (safe process pipe)
     if not techs:
-        success, output = run_cmd(
-            f'echo "{domain}" | httpx -silent -tech-detect -status-code 2>/dev/null',
-            timeout=30
-        )
-        if success and output:
-            tech_match = re.findall(r'\[([^\]]+)\]', output)
-            for match in tech_match:
-                for t in match.split(","):
-                    t = t.strip()
-                    if t and not t.isdigit() and len(t) > 1:
-                        techs[t.lower()] = 1
+        try:
+            p1 = subprocess.Popen(["echo", domain], stdout=subprocess.PIPE)
+            p2 = subprocess.run(
+                ["httpx", "-silent", "-tech-detect", "-status-code"],
+                stdin=p1.stdout, capture_output=True, text=True, timeout=30
+            )
+            p1.stdout.close()
+            if p2.returncode == 0 and p2.stdout:
+                tech_match = re.findall(r'\[([^\]]+)\]', p2.stdout)
+                for match in tech_match:
+                    for t in match.split(","):
+                        t = t.strip()
+                        if t and not t.isdigit() and len(t) > 1:
+                            techs[t.lower()] = 1
+        except Exception:
+            pass
 
     # Method 3: Manual header analysis
     success, output = run_cmd(
-        f'curl -sI "https://{domain}" --max-time 10 2>/dev/null',
+        ["curl", "-sI", f"https://{domain}", "--max-time", "10"],
         timeout=15
     )
     if success and output:
@@ -117,7 +146,7 @@ def detect_technologies(domain, recon_dir=None):
 
     for path, tech in fingerprints.items():
         success, output = run_cmd(
-            f'curl -s -o /dev/null -w "%{{http_code}}" "https://{domain}{path}" --max-time 5',
+            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", f"https://{domain}{path}", "--max-time", "5"],
             timeout=10
         )
         if success and output in ("200", "301", "302", "403"):
@@ -143,10 +172,9 @@ def search_cves(tech_name, max_results=10):
     # Method 1: NVD API (NIST)
     print(f"    [>] Searching CVEs for: {tech_name}...")
     try:
-        success, output = run_cmd(
-            f'curl -s "https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={search_term}&resultsPerPage={max_results}" --max-time 15',
-            timeout=20
-        )
+        encoded_term = re.sub(r'[^a-zA-Z0-9_-]', ' ', search_term).strip()
+        nvd_url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={encoded_term}&resultsPerPage={max_results}"
+        success, output = run_cmd(["curl", "-s", nvd_url, "--max-time", "15"], timeout=20)
         if success and output:
             data = json.loads(output)
             for vuln in data.get("vulnerabilities", []):
@@ -185,10 +213,9 @@ def search_cves(tech_name, max_results=10):
     # Method 2: cve.circl.lu API (fallback)
     if not cves:
         try:
-            success, output = run_cmd(
-                f'curl -s "https://cve.circl.lu/api/search/{search_term}" --max-time 15',
-                timeout=20
-            )
+            encoded_term = re.sub(r'[^a-zA-Z0-9_-]', ' ', search_term).strip()
+            circl_url = f"https://cve.circl.lu/api/search/{encoded_term}"
+            success, output = run_cmd(["curl", "-s", circl_url, "--max-time", "15"], timeout=20)
             if success and output:
                 data = json.loads(output)
                 if isinstance(data, dict):
@@ -212,6 +239,7 @@ def search_cves(tech_name, max_results=10):
 
 def run_nuclei_cve_scan(domain, recon_dir=None):
     """Run nuclei with CVE templates against the target."""
+    domain = validate_domain(domain)
     print(f"\n[*] Running nuclei CVE scan on {domain}...")
 
     targets_file = None
@@ -220,19 +248,31 @@ def run_nuclei_cve_scan(domain, recon_dir=None):
         if os.path.exists(live_file):
             targets_file = live_file
 
-    if targets_file:
-        cmd = f'cat "{targets_file}" | nuclei -tags cve -severity medium,high,critical -silent -rate-limit 30 2>/dev/null'
-    else:
-        cmd = f'echo "https://{domain}" | nuclei -tags cve -severity medium,high,critical -silent -rate-limit 30 2>/dev/null'
-
-    success, output = run_cmd(cmd, timeout=300)
-
     findings = []
-    if success and output:
-        for line in output.strip().split("\n"):
-            if line.strip():
-                findings.append(line.strip())
-                print(f"    [VULN] {line.strip()}")
+    try:
+        if targets_file:
+            with open(targets_file, "r") as tf:
+                res = subprocess.run(
+                    ["nuclei", "-tags", "cve", "-severity", "medium,high,critical", "-silent", "-rate-limit", "30"],
+                    stdin=tf, capture_output=True, text=True, timeout=300
+                )
+                success, output = (res.returncode == 0, res.stdout.strip())
+        else:
+            p1 = subprocess.Popen(["echo", f"https://{domain}"], stdout=subprocess.PIPE)
+            res = subprocess.run(
+                ["nuclei", "-tags", "cve", "-severity", "medium,high,critical", "-silent", "-rate-limit", "30"],
+                stdin=p1.stdout, capture_output=True, text=True, timeout=300
+            )
+            p1.stdout.close()
+            success, output = (res.returncode == 0, res.stdout.strip())
+
+        if success and output:
+            for line in output.strip().split("\n"):
+                if line.strip():
+                    findings.append(line.strip())
+                    print(f"    [VULN] {line.strip()}")
+    except Exception as e:
+        print(f"    [!] Nuclei scan skipped or encountered error: {e}")
 
     if not findings:
         print("    [+] No CVEs detected by nuclei")
@@ -241,7 +281,8 @@ def run_nuclei_cve_scan(domain, recon_dir=None):
 
 
 def check_exposed_configs(domain, recon_dir=None):
-    """Check for exposed config files (env.js, app_env.js, etc.)."""
+    """Check for exposed config files (env.js, app_env.js, etc.) safely without shared temp files."""
+    domain = validate_domain(domain)
     print(f"\n[*] Checking for exposed config files on {domain}...")
     exposed = []
 
@@ -258,20 +299,29 @@ def check_exposed_configs(domain, recon_dir=None):
             with open(live_file) as f:
                 hosts = [line.strip() for line in f if line.strip()][:20]
 
-    for host in hosts:
-        for path in config_paths:
-            url = f"{host}{path}"
-            success, output = run_cmd(
-                f'curl -s -o /tmp/cfg_check.txt -w "%{{http_code}}" --max-time 5 "{url}"',
-                timeout=10
-            )
-            if success and output.strip() == "200":
-                # Verify it's not an HTML error page
-                _, content = run_cmd('file /tmp/cfg_check.txt', timeout=5)
-                _, head = run_cmd('head -1 /tmp/cfg_check.txt', timeout=5)
-                if 'HTML' not in content and '<!DOCTYPE' not in head and '<html' not in head.lower():
-                    exposed.append(url)
-                    print(f"    [VULN] Config exposed: {url}")
+    with tempfile.NamedTemporaryFile(prefix="cfg_check_", suffix=".txt", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        for host in hosts:
+            for path in config_paths:
+                url = f"{host}{path}"
+                success, output = run_cmd(
+                    ["curl", "-s", "-o", tmp_path, "-w", "%{http_code}", "--max-time", "5", url],
+                    timeout=10
+                )
+                if success and output.strip() == "200":
+                    success_f, content = run_cmd(["file", tmp_path], timeout=5)
+                    success_h, head = run_cmd(["head", "-1", tmp_path], timeout=5)
+                    if 'HTML' not in content and '<!DOCTYPE' not in head and '<html' not in head.lower():
+                        exposed.append(url)
+                        print(f"    [VULN] Config exposed: {url}")
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
     if not exposed:
         print("    [+] No exposed config files found")
@@ -281,6 +331,7 @@ def check_exposed_configs(domain, recon_dir=None):
 
 def hunt_cves(domain, recon_dir=None):
     """Full CVE hunting pipeline."""
+    domain = validate_domain(domain)
     print("=" * 50)
     print(f"  CVE Hunter — {domain}")
     print("=" * 50)

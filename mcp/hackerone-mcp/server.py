@@ -34,8 +34,8 @@ try:
     import certifi
     _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 except ImportError:
-    _SSL_CTX.check_hostname = False
-    _SSL_CTX.verify_mode = ssl.CERT_NONE
+    # Retain system default CA bundle with certificate validation enforced
+    _SSL_CTX = ssl.create_default_context()
 
 H1_GRAPHQL = "https://hackerone.com/graphql"
 DEFAULT_TIMEOUT = 15

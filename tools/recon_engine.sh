@@ -22,6 +22,13 @@ log_done()  { echo -e "    ${GREEN}[✓]${NC} $1"; }
 
 TARGET="${1:?Usage: $0 <target-domain> [--quick]}"
 QUICK_MODE="${2:-}"
+
+# Validate target format to prevent path traversal (CWE-22) and shell injection (CWE-78)
+if [[ ! "$TARGET" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]]; then
+    log_err "Invalid target domain format: $TARGET"
+    exit 1
+fi
+
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RECON_DIR="$BASE_DIR/recon/$TARGET"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -66,22 +73,23 @@ fi
 # crt.sh (certificate transparency)
 log_step "Querying crt.sh..."
 curl -s "https://crt.sh/?q=%25.$TARGET&output=json" 2>/dev/null \
-    | python3 -c "
+    | python3 -c '
 import sys, json
+target = sys.argv[1] if len(sys.argv) > 1 else ""
 try:
     data = json.load(sys.stdin)
     names = set()
     for entry in data:
-        for name in entry.get('name_value', '').split('\n'):
+        for name in entry.get("name_value", "").split("\n"):
             name = name.strip().lower()
-            if name and '*' not in name and name.endswith('.$TARGET'):
+            if name and "*" not in name and name.endswith("." + target):
                 names.add(name)
-            elif name and '*' not in name and '.' in name:
+            elif name and "*" not in name and "." in name:
                 names.add(name)
     for n in sorted(names):
         print(n)
-except: pass
-" > "$RECON_DIR/subdomains/crtsh.txt" 2>/dev/null || true
+except Exception: pass
+' "$TARGET" > "$RECON_DIR/subdomains/crtsh.txt" 2>/dev/null || true
 log_done "crt.sh: $(wc -l < "$RECON_DIR/subdomains/crtsh.txt" 2>/dev/null || echo 0) subdomains"
 
 # Wayback subdomains

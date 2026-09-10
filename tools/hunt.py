@@ -131,14 +131,13 @@ def run_recon(domain, quick=False):
     """Run recon engine on a domain."""
     log("info", f"Running recon on {domain}...")
     script = os.path.join(TOOLS_DIR, "recon_engine.sh")
-    quick_flag = "--quick" if quick else ""
+    cmd_args = ["bash", script, domain]
+    if quick:
+        cmd_args.append("--quick")
 
     # Run with live output
     try:
-        proc = subprocess.Popen(
-            f'bash "{script}" "{domain}" {quick_flag}',
-            shell=True, cwd=BASE_DIR
-        )
+        proc = subprocess.Popen(cmd_args, cwd=BASE_DIR)
         proc.wait(timeout=1800)  # 30 min timeout
         return proc.returncode == 0
     except subprocess.TimeoutExpired:
@@ -171,13 +170,12 @@ def run_vuln_scan(domain, quick=False):
 
     log("info", f"Running vulnerability scanner on {domain}...")
     script = os.path.join(TOOLS_DIR, "vuln_scanner.sh")
-    quick_flag = "--quick" if quick else ""
+    cmd_args = ["bash", script, recon_dir]
+    if quick:
+        cmd_args.append("--quick")
 
     try:
-        proc = subprocess.Popen(
-            f'bash "{script}" "{recon_dir}" {quick_flag}',
-            shell=True, cwd=BASE_DIR
-        )
+        proc = subprocess.Popen(cmd_args, cwd=BASE_DIR)
         proc.wait(timeout=1800)
         return proc.returncode == 0
     except subprocess.TimeoutExpired:
@@ -299,13 +297,12 @@ def run_cve_hunt(domain):
     log("info", f"Running CVE hunter on {domain}...")
     script = os.path.join(TOOLS_DIR, "cve_hunter.py")
     recon_dir = os.path.join(RECON_DIR, domain)
-    recon_flag = f'--recon-dir "{recon_dir}"' if os.path.isdir(recon_dir) else ""
+    cmd_args = ["python3", script, domain]
+    if os.path.isdir(recon_dir):
+        cmd_args.extend(["--recon-dir", recon_dir])
 
     try:
-        proc = subprocess.Popen(
-            f'python3 "{script}" "{domain}" {recon_flag}',
-            shell=True, cwd=BASE_DIR
-        )
+        proc = subprocess.Popen(cmd_args, cwd=BASE_DIR)
         proc.wait(timeout=600)
         return proc.returncode == 0
     except subprocess.TimeoutExpired:
@@ -318,17 +315,16 @@ def run_zero_day_fuzzer(domain, deep=False):
     """Run zero-day fuzzer on a target."""
     log("info", f"Running zero-day fuzzer on {domain}...")
     script = os.path.join(TOOLS_DIR, "zero_day_fuzzer.py")
-    deep_flag = "--deep" if deep else ""
-
-    # Check if we have recon data with live URLs
+    target_url = f"https://{domain}"
+    cmd_args = ["python3", script, target_url]
     recon_dir = os.path.join(RECON_DIR, domain)
     if os.path.isdir(recon_dir):
-        cmd = f'python3 "{script}" "https://{domain}" --recon-dir "{recon_dir}" {deep_flag}'
-    else:
-        cmd = f'python3 "{script}" "https://{domain}" {deep_flag}'
+        cmd_args.extend(["--recon-dir", recon_dir])
+    if deep:
+        cmd_args.append("--deep")
 
     try:
-        proc = subprocess.Popen(cmd, shell=True, cwd=BASE_DIR)
+        proc = subprocess.Popen(cmd_args, cwd=BASE_DIR)
         proc.wait(timeout=900)
         return proc.returncode == 0
     except subprocess.TimeoutExpired:

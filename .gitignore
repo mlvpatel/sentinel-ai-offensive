@@ -2,7 +2,8 @@
 findings/
 recon/
 reports/
-config.json
+/config.json
+!mcp/**/config.json
 *.burp
 *.json.bak
 TODOS.md

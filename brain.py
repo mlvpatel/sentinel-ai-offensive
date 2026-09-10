@@ -66,6 +66,16 @@ except ImportError:
 # ── Config ─────────────────────────────────────────────────────────────────────
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
+# Terminal color constants
+GREEN   = "\033[0;32m"
+CYAN    = "\033[0;36m"
+YELLOW  = "\033[1;33m"
+RED     = "\033[91m"
+MAGENTA = "\033[0;35m"
+BOLD    = "\033[1m"
+DIM     = "\033[2m"
+NC      = "\033[0m"
+
 # ── Multi-provider LLM client ──────────────────────────────────────────────────
 # Wraps Ollama, Claude, OpenAI, Grok behind a single .chat() interface.
 
@@ -1612,12 +1622,35 @@ NEXT ACTION: <one concrete action>
             return self._gowitness_install_command()
         return self._TOOL_INSTALL.get(tool_name.lower())
 
+    @staticmethod
+    def is_safe_command(cmd: str) -> tuple[bool, str]:
+        """Validate command against catastrophic or unauthorized destructive actions (OWASP LLM08)."""
+        if not cmd or not isinstance(cmd, str):
+            return False, "Empty command"
+        cmd_lower = cmd.lower().strip()
+        blocked_patterns = [
+            (r"\brm\s+-[rf]{1,2}\s+[/~]", "Recursive deletion of root or home directory"),
+            (r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:", "Fork bomb attempt"),
+            (r">\s*/dev/sd[a-z]", "Direct block device overwrite"),
+            (r"\bmkfs\b", "Filesystem creation attempt"),
+            (r"\bdd\s+if=.*of=/dev/", "Raw disk write attempt"),
+        ]
+        for pattern, reason in blocked_patterns:
+            if re.search(pattern, cmd_lower):
+                return False, reason
+        return True, "OK"
+
     def run_command(self, cmd: str, timeout: int = 120,
                     cwd: str = None) -> tuple[int, str, str]:
         """
-        Execute a shell command and return (returncode, stdout, stderr).
+        Execute a shell command with safety guardrails and return (returncode, stdout, stderr).
         Stdout/stderr are capped at 8K each to avoid flooding context.
         """
+        safe, reason = self.is_safe_command(cmd)
+        if not safe:
+            print(f"{RED}[Brain/Security] Blocked unsafe command: {reason}{NC}", flush=True)
+            return -1, "", f"Command blocked by Sentinel safety guard: {reason}"
+
         import subprocess as _sp
         proc = None
         try:
